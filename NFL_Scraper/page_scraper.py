@@ -68,6 +68,7 @@ else:
         'Los Angeles Chargers': 'SDG', 
         'Los Angeles Rams': 'RAM', 
         'Las Vegas Raiders': 'RAI', 
+        'Oakland Raiders': 'RAI',
         'Miami Dolphins': 'MIA', 
         'Minnesota Vikings': 'MIN', 
         'New England Patriots': 'NWE', 
@@ -76,6 +77,8 @@ else:
         'New York Jets': 'NYJ', 
         'Philadelphia Eagles': 'PHI', 
         'Pittsburgh Steelers': 'PIT', 
+        'St. Louis Rams': 'RAM',
+        'San Diego Chargers': 'SDG',
         'San Francisco 49ers': 'SFO', 
         'Seattle Seahawks': 'SEA', 
         'Tampa Bay Buccaneers': 'TAM', 
@@ -99,48 +102,60 @@ else:
     #
     # GET VEGAS LINE DATA
     #
+    if not os.path.exists("C:/Users/ddcat/OneDrive/Desktop/Projects/SportsAnalysis/nfl_vegas_lines_2014-2023.csv"):
 
-    veg_df = pd.DataFrame()
-    for season in seasons:
-        for team in teams:
-            url = "https://www.pro-football-reference.com/teams/" + team + "/" + season + "_lines.htm"
-            print(url)
+        veg_df = pd.DataFrame()
+        for season in seasons:
+            for team in teams:
+                url = "https://www.pro-football-reference.com/teams/" + team + "/" + season + "_lines.htm"
+                print(url)
 
-            lines_df =  pd.read_html(url, header=0, attrs={'id': 'vegas_lines'})[0]
+                lines_df =  pd.read_html(url, header=0, attrs={'id': 'vegas_lines'})[0]
 
-            lines_df.insert(loc=0, column='Season', value=season)
-            lines_df.insert(loc=2, column='Team', value=team.upper())
+                lines_df.insert(loc=0, column='Season', value=season)
+                lines_df.insert(loc=2, column='Team', value=team.upper())
 
-            veg_df = pd.concat([veg_df, lines_df], ignore_index=True)
-            time.sleep(random.randint(8, 10))
+                veg_df = pd.concat([veg_df, lines_df], ignore_index=True)
+                time.sleep(random.randint(8, 10))
 
-    veg_df.to_csv('nfl_vegas_lines_2014-2023.csv', index=False)
-    veg_df = pd.read_csv("nfl_vegas_lines_2014-2023")
-    veg_df = veg_df.drop(veg_df.columns[6:], axis=1)
-    column_names = {"G#":"G", "Over/Under":"Total"}
-    veg_df = veg_df.rename(columns=column_names)
-    print(veg_df.info(verbose=True))
+        veg_df.to_csv('nfl_vegas_lines_2014-2023.csv', index=False)
+        
+    else:
+        veg_df = pd.read_csv("C:/Users/ddcat/OneDrive/Desktop/Projects/SportsAnalysis/nfl_vegas_lines_2014-2023.csv")
+        veg_df = veg_df.drop(veg_df.columns[6:], axis=1)
+        column_names = {"G#":"G", "Over/Under":"Total"}
+        veg_df = veg_df.rename(columns=column_names)
+        print(veg_df.info(verbose=True))
 
-    veg_df = veg_df.query('(Season <= 2020 and G < 17) or (Season >= 2021 and G < 18)')
-    print(veg_df.shape())
+        veg_df = veg_df.query('(Season <= 2020 and G < 17) or (Season >= 2021 and G < 18)')
+        print(veg_df.shape)
+        #print(nfl_pts_df.shape)
 
-    veg_df['Home'] = veg_df['Opp'].apply(lambda x: 0 if x[0] == '@' else 1)
-    veg_df['Opp'] = veg_df['Opp'].apply(lambda x: 0 if x[0] == '@' else 1)
+        veg_df['Home'] = veg_df['Opp'].apply(lambda x: 0 if x[0] == '@' else 1)
+        veg_df['Opp'] = veg_df['Opp'].apply(lambda x: x[1:] if x[0] == '@' else x)
 
-    abbr_dict = {
-    'OAK': 'RAI', 
-    'LVR': 'RAI', 
-    'STL': 'RAM', 
-    'LAR': 'RAM', 
-    'LAC': 'SDG', 
-    'IND': 'CLT', 
-    'HOU': 'HTX', 
-    'BAL': 'RAV', 
-    'ARI': 'CRD', 
-    'TEN': 'OTI'
-    }
+        abbr_dict = {
+        'OAK': 'RAI', 
+        'LVR': 'RAI', 
+        'STL': 'RAM', 
+        'LAR': 'RAM', 
+        'LAC': 'SDG', 
+        'IND': 'CLT', 
+        'HOU': 'HTX', 
+        'BAL': 'RAV', 
+        'ARI': 'CRD', 
+        'TEN': 'OTI'
+        }
 
-    veg_df = veg_df.replace({'Opp': abbr_dict})
+        veg_df = veg_df.replace({'Opp': abbr_dict})
+        print(veg_df.shape)
+        print(nfl_pts_df.shape)
+        # nfl_pts_df['Opp'] = nfl_pts_df['Opp'].astype(str)
+        # veg_df['Opp'] = veg_df['Opp'].astype(str)
+        merged_df = pd.merge(nfl_pts_df, veg_df, on=['Season', 'Team', 'Opp', 'Home'])
+        print(nfl_pts_df.query('Season == 2014 and Team == "CRD"'))
+        print(veg_df.query('Season == 2014 and Team == "CRD"'))
+        print(merged_df.query('Season == 2014 and Team == "CRD"'))
 
-    merged_df = pd.merge(nfl_pts_df, veg_df, on=['Season', 'Team', 'Opp', 'Home'])
-    merged_df.to_csv('nfl_pts_and_vegas_2014-2023.csv', index=False)
+        merged_df.to_csv('nfl_pts_and_vegas_2014-2023.csv', index=False)
+
