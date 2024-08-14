@@ -2,56 +2,49 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, r2_score
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.metrics import accuracy_score
 
 # Load the dataset
-merged_dataset = pd.read_csv("nfl_pts_and_vegas_with_teams.csv")
+merged_dataset = pd.read_csv("nfl_merged_final.csv")
 
 # Clean the dataset
 data_cleaned = merged_dataset.dropna()
-# Assuming data_cleaned is your DataFrame containing the one-hot encoded teams
 
-# Assuming data_cleaned is your DataFrame containing the one-hot encoded teams
 def add_team_identifier(df):
-    # Create a new column 'Team' by finding which one-hot encoded column has a value of 1
     df.loc[:, 'Team'] = df[[col for col in df.columns if col.startswith('Team_')]].idxmax(axis=1)
     df['Team'] = df['Team'].str.replace('Team_', '')  # Remove the 'Team_' prefix
 
     df.loc[:, 'Opp'] = df[[col for col in df.columns if col.startswith('Opp_')]].idxmax(axis=1)
     df['Opp'] = df['Opp'].str.replace('Opp_', '')  # Remove the 'Opp_' prefix
-
     return df
 
 # Add the team and opponent identifiers
 data_cleaned = add_team_identifier(data_cleaned)
 
-# Now you can calculate the rolling averages using the new 'Team' column
 def calculate_rolling_averages(df, team_column, points_column, n_games=5):
     df.loc[:, f'Avg_{points_column}_Last_{n_games}'] = df.groupby(team_column)[points_column].transform(
         lambda x: x.rolling(window=n_games, min_periods=1).mean()
     )
     return df
 
-# Calculate rolling averages for both the team and the opponent
+# Calculate rolling averages
 data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Off_Pts', n_games=5)
 data_cleaned = calculate_rolling_averages(data_cleaned, 'Opp', 'Def_Pts', n_games=5)
-# Now, data_cleaned contains new columns for these averages:
-# 'Avg_Off_Pts_Last_5' for the team's average offensive points over the last 5 games
-# 'Avg_Def_Pts_Last_5' for the opponent's average defensive points allowed over the last 5 games
-print(data_cleaned)
-# You can now include these averages in your feature set (X)
+
 team_columns = [col for col in data_cleaned.columns if col.startswith('Team_') or col.startswith('Opp_')]
+data_cleaned['Over_Under_Target'] = (data_cleaned['Off_Pts'] + data_cleaned['Def_Pts']) > data_cleaned['Total']
+data_cleaned['Over_Under_Target'] = data_cleaned['Over_Under_Target'].astype(int)
 
-# Update the feature set (X) to include the average scoring columns and the one-hot encoded team columns
+# Feature set
 X = data_cleaned[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5'] + team_columns]
+y = data_cleaned['Over_Under_Target']
 
-# Your target variable (y) remains the same
-y = data_cleaned['Off_Pts'] + data_cleaned['Def_Pts']
-
-# Split the data into training and testing sets (70% training, 30% testing)
+# Shuffle and split the data
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, shuffle=True)
+test_indices = X_test.index
+
 # Define the neural network class
 class OverUnderNN(nn.Module):
     def __init__(self, input_size):
@@ -63,88 +56,120 @@ class OverUnderNN(nn.Module):
     def forward(self, x):
         x = torch.relu(self.layer1(x))
         x = torch.relu(self.layer2(x))
-        output = self.output_layer(x)
+        output = torch.sigmoid(self.output_layer(x))  # Sigmoid for binary classification
         return output
 
-# Initialize the model
+# Initialize model, loss function, and optimizer
 input_size = X_train.shape[1]
-model = OverUnderNN(input_size)
-
-# Define the loss function and optimizer
-criterion = nn.MSELoss()
+model = OverUnderNN(input_size=input_size)
+criterion = nn.BCELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Convert the training and test data to tensors
+# Convert data to tensors
 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
 y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
-X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
-y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
-
-# Lists to track losses
-train_losses = []
-val_losses = []
 
 # Training loop
 epochs = 1000
 for epoch in range(epochs):
-    model.train()  # Set the model to training mode
-
-    # Forward pass
+    model.train()
     predictions = model(X_train_tensor)
     loss = criterion(predictions, y_train_tensor)
-    train_losses.append(loss.item())
-
-    # Backward pass and optimization
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
-    # Validation step
-    model.eval()
-    with torch.no_grad():
-        val_predictions = model(X_test_tensor)
-        val_loss = criterion(val_predictions, y_test_tensor)
-        val_losses.append(val_loss.item())
-
-    # Print the loss every 10 epochs
     if (epoch + 1) % 10 == 0:
-        print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}')
+        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}')
 
-# Plotting the training and validation losses
-# plt.figure(figsize=(10, 5))
-# plt.plot(train_losses, label='Training Loss')
-# plt.plot(val_losses, label='Validation Loss')
-# plt.xlabel('Epochs')
-# plt.ylabel('Loss')
-# plt.legend()
-# plt.title('Training and Validation Loss over Epochs')
-# plt.show()
+# Convert test data to tensors
+X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
 
-# Evaluate the model on the test set
+# Cross-Validation
+print("\nPerforming Cross-Validation...")
+skf = StratifiedKFold(n_splits=5)
+cross_val_acc = []
+for train_index, val_index in skf.split(X, y):
+    X_train_cv, X_val_cv = X.iloc[train_index], X.iloc[val_index]
+    y_train_cv, y_val_cv = y.iloc[train_index], y.iloc[val_index]
+
+    X_train_cv_tensor = torch.tensor(X_train_cv.values, dtype=torch.float32)
+    y_train_cv_tensor = torch.tensor(y_train_cv.values, dtype=torch.float32).view(-1, 1)
+
+    X_val_cv_tensor = torch.tensor(X_val_cv.values, dtype=torch.float32)
+    y_val_cv_tensor = torch.tensor(y_val_cv.values, dtype=torch.float32).view(-1, 1)
+
+    model_cv = OverUnderNN(input_size=input_size)
+    optimizer_cv = optim.Adam(model_cv.parameters(), lr=0.001)
+    
+    for epoch in range(epochs):
+        model_cv.train()
+        predictions_cv = model_cv(X_train_cv_tensor)
+        loss_cv = criterion(predictions_cv, y_train_cv_tensor)
+        optimizer_cv.zero_grad()
+        loss_cv.backward()
+        optimizer_cv.step()
+
+    model_cv.eval()
+    with torch.no_grad():
+        predictions_cv = model_cv(X_val_cv_tensor)
+        predicted_classes_cv = (predictions_cv > 0.5).float()
+        accuracy_cv = accuracy_score(y_val_cv, predicted_classes_cv)
+        cross_val_acc.append(accuracy_cv)
+
+print(f"Cross-Validation Accuracy Scores: {cross_val_acc}")
+print(f"Mean Cross-Validation Accuracy: {np.mean(cross_val_acc):.4f}")
+
+# Test model on test data
 model.eval()
 with torch.no_grad():
     predictions = model(X_test_tensor)
     test_loss = criterion(predictions, y_test_tensor)
-    print(f'Test Loss (MSE): {test_loss.item():.4f}')
+    predicted_classes = (predictions > 0.5).float()
+    accuracy = accuracy_score(y_test_tensor, predicted_classes)
 
-    # Convert tensors to numpy arrays for additional metrics
-    predictions_numpy = predictions.numpy().flatten()
-    y_test_numpy = y_test_tensor.numpy().flatten()
+print(f'Test Loss: {test_loss.item():.4f}')
+print(f'Test Accuracy: {accuracy:.4f}')
 
-    # Calculate Mean Absolute Error (MAE)
-    mae = mean_absolute_error(y_test_numpy, predictions_numpy)
-    print(f'Test MAE: {mae:.4f}')
+# Permutation test (sanity check)
+print("\nPerforming Permutation Test...")
+y_permuted = np.random.permutation(y)
+X_train_perm, X_test_perm, y_train_perm, y_test_perm = train_test_split(X, y_permuted, test_size=0.3, random_state=42, shuffle=True)
 
-    # Calculate R² Score
-    r2 = r2_score(y_test_numpy, predictions_numpy)
-    print(f'R² Score: {r2:.4f}')
+X_train_perm_tensor = torch.tensor(X_train_perm.values, dtype=torch.float32)
+y_train_perm_tensor = torch.tensor(y_train_perm, dtype=torch.float32).view(-1, 1)  # No .values here
 
-predictions = predictions.round()
-for i in range(10):
-    print(f"Game {i + 1}: Predicted Total: {predictions[i][0]:.2f}, Actual Total: {y_test.values[i]:.2f}")
+X_test_perm_tensor = torch.tensor(X_test_perm.values, dtype=torch.float32)
+y_test_perm_tensor = torch.tensor(y_test_perm, dtype=torch.float32).view(-1, 1)  # No .values here
 
-try:
-    torch.save(model.state_dict(), 'over_under_model.pth')
-    print("Model saved successfully!")
-except Exception as e:
-    print(f"Error saving the model: {e}")
+# Train on permuted data
+model_perm = OverUnderNN(input_size=input_size)
+optimizer_perm = optim.Adam(model_perm.parameters(), lr=0.001)
+
+for epoch in range(epochs):
+    model_perm.train()
+    predictions_perm = model_perm(X_train_perm_tensor)
+    loss_perm = criterion(predictions_perm, y_train_perm_tensor)
+    optimizer_perm.zero_grad()
+    loss_perm.backward()
+    optimizer_perm.step()
+
+# Evaluate on permuted data
+model_perm.eval()
+with torch.no_grad():
+    predictions_perm = model_perm(X_test_perm_tensor)
+    predicted_classes_perm = (predictions_perm > 0.5).float()
+    accuracy_perm = accuracy_score(y_test_perm_tensor, predicted_classes_perm)
+
+print(f'Permutation Test Accuracy: {accuracy_perm:.4f}')
+
+# Manually inspect predictions
+print("\nManual Inspection of Predictions:")
+for i, idx in enumerate(test_indices[:10]):
+    actual_score = data_cleaned.loc[idx, 'Off_Pts'] + data_cleaned.loc[idx, 'Def_Pts']
+    over_under_line = data_cleaned.loc[idx, 'Total']
+    predicted = "Over" if predicted_classes[i].item() == 1 else "Under"
+    actual_result = "Over" if y_test.iloc[i] == 1 else "Under"
+    print(f"Game {i + 1}: Predicted: {predicted}, Actual: {actual_result}, Actual Score: {actual_score}, Over/Under Line: {over_under_line}")
+
