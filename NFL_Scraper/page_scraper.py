@@ -156,6 +156,6 @@ else:
         print(nfl_pts_df.query('Season == 2014 and Team == "CRD"'))
         print(veg_df.query('Season == 2014 and Team == "CRD"'))
         print(merged_df.query('Season == 2014 and Team == "CRD"'))
-
+        
         merged_df.to_csv('nfl_pts_and_vegas_2014-2023.csv', index=False)
 
