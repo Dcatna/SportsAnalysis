@@ -3,11 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import accuracy_score
+from model import OverUnderNN
 
 # Load the dataset
-merged_dataset = pd.read_csv("nfl_merged_final.csv")
+merged_dataset = pd.read_csv("nfl_merged_corrected.csv")
 
 # Clean the dataset
 data_cleaned = merged_dataset.dropna()
@@ -29,48 +30,65 @@ def calculate_rolling_averages(df, team_column, points_column, n_games=5):
     )
     return df
 
-# Calculate rolling averages
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Off_Pts', n_games=5)
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Opp', 'Def_Pts', n_games=5)
+# Convert Time_of_Possession to seconds
+def convert_time_of_possession_to_seconds(time_str):
+    if pd.isna(time_str) or ':' not in time_str:
+        return 0  
+    try:
+        minutes, seconds = map(int, time_str.split(':'))
+        return minutes * 60 + seconds
+    except ValueError:
+        return 0 
 
-team_columns = [col for col in data_cleaned.columns if col.startswith('Team_') or col.startswith('Opp_')]
+n_games = 5
+# Apply the conversion
+data_cleaned['Time_of_Possession_Seconds'] = data_cleaned['Time_of_Possession'].apply(convert_time_of_possession_to_seconds)
+
+# Calculate rolling averages on the converted column
+data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Time_of_Possession_Seconds', n_games=n_games)
+data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Off_Pts', n_games=n_games)
+data_cleaned = calculate_rolling_averages(data_cleaned, 'Opp', 'Def_Pts', n_games=n_games)
+data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', '3DConv', n_games=n_games)
+data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', '4DConv', n_games=n_games)
+
+# Ensure the 'Over_Under_Target' column is created before filtering columns
 data_cleaned['Over_Under_Target'] = (data_cleaned['Off_Pts'] + data_cleaned['Def_Pts']) > data_cleaned['Total']
 data_cleaned['Over_Under_Target'] = data_cleaned['Over_Under_Target'].astype(int)
 
-# Feature set
-X = data_cleaned[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5'] + team_columns]
+# Drop the specific columns you don’t want
+columns_to_drop = ['Team_Pts', 'Opp_Pts', 'Team_Yds', 'Team_Yds_Lost_Sacks']
+data_cleaned = data_cleaned.drop(columns=columns_to_drop, errors='ignore')
+
+team_columns = [col for col in data_cleaned.columns if col.startswith('Team_') or col.startswith('Opp_')]
+
+# Define the feature set without the dropped columns
+X = data_cleaned[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5', 
+                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns]
 y = data_cleaned['Over_Under_Target']
 
+
+for col in X.columns:
+    print(col)
+print(len(X), X)
 # Shuffle and split the data
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, shuffle=True)
 test_indices = X_test.index
 
 # Define the neural network class
-class OverUnderNN(nn.Module):
-    def __init__(self, input_size):
-        super(OverUnderNN, self).__init__()
-        self.layer1 = nn.Linear(input_size, 64)
-        self.layer2 = nn.Linear(64, 32)
-        self.output_layer = nn.Linear(32, 1)
-
-    def forward(self, x):
-        x = torch.relu(self.layer1(x))
-        x = torch.relu(self.layer2(x))
-        output = torch.sigmoid(self.output_layer(x))  # Sigmoid for binary classification
-        return output
 
 # Initialize model, loss function, and optimizer
 input_size = X_train.shape[1]
+print("input sixe: ", input_size)
 model = OverUnderNN(input_size=input_size)
 criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.0005)
 
 # Convert data to tensors
 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
 y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
 
 # Training loop
-epochs = 1000
+epochs = 2000
 for epoch in range(epochs):
     model.train()
     predictions = model(X_train_tensor)
@@ -173,3 +191,8 @@ for i, idx in enumerate(test_indices[:10]):
     actual_result = "Over" if y_test.iloc[i] == 1 else "Under"
     print(f"Game {i + 1}: Predicted: {predicted}, Actual: {actual_result}, Actual Score: {actual_score}, Over/Under Line: {over_under_line}")
 
+try:
+    torch.save(model.state_dict(), "overunder_model.pth")
+    print("MODEL SAVED")
+except Exception as e:
+    print(f"Error saving model: {e}")

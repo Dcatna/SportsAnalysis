@@ -1,31 +1,29 @@
 import pandas as pd
 
-# Load the first dataset (e.g., team and opponent information with features)
-df1 = pd.read_csv('nfl_pts_and_vegas_with_gamelogs.csv')
+# Load your data
+player_df = pd.read_csv('all_player_data.csv')
 
-# Load the second dataset (e.g., gamelogs with detailed stats)
-df2 = pd.read_csv('nfl_pts_and_vegas_with_teams.csv')
+# Step 1: Remove rows that contain repeated headers or non-data text
+player_df = player_df[~player_df['Player'].str.contains('Player|Passing|Rushing|Receiving|Fumbles', na=False)]
 
-# Print the first few rows of each dataset to inspect them
-print(df1.head())
-print(df2.head())
+# Step 2: Group by unique game identifiers and count occurrences
+game_grouped = player_df.groupby(['Season', 'Date', 'Teams']).size()
 
+# Step 3: Identify games with excessive rows
+excessive_rows = game_grouped[game_grouped > 30]  # Adjust the threshold if necessary
 
-# Check for duplicates in df1
-duplicate_keys_df1 = df1[df1.duplicated(subset=['Season', 'Week', 'Day', 'Date', 'Home', 'Off_Pts', 'Def_Pts'], keep=False)]
-print(f"Duplicates in df1: {duplicate_keys_df1}")
+print(f"Games with excessive player rows:\n{excessive_rows}")
 
-# Check for duplicates in df2
-duplicate_keys_df2 = df2[df2.duplicated(subset=['Season', 'Week', 'Day', 'Date', 'Home', 'Off_Pts', 'Def_Pts'], keep=False)]
-print(f"Duplicates in df2: {duplicate_keys_df2}")
+# Step 4: Filter out games with excessively high player counts
+normal_games = game_grouped[game_grouped <= 30]  # Example threshold for reasonable row counts
 
+# Subset the dataframe to include only games with a reasonable number of rows
+player_df_cleaned = player_df[player_df.set_index(['Season', 'Date', 'Teams']).index.isin(normal_games.index)]
 
-# Identify duplicates in the first DataFrame
-df1_duplicates = df1[df1.duplicated(subset=['Season', 'Week', 'Day', 'Date', 'Home', 'Off_Pts', 'Def_Pts'], keep=False)]
-print(f"Number of duplicates in df1: {df1_duplicates.shape[0]}")
-print(df1_duplicates)
+# Step 5: Drop duplicates again as a final cleanup step
+player_df_cleaned = player_df_cleaned.drop_duplicates()
 
-# Identify duplicates in the second DataFrame
-df2_duplicates = df2[df2.duplicated(subset=['Season', 'Week', 'Day', 'Date', 'Home', 'Off_Pts', 'Def_Pts'], keep=False)]
-print(f"Number of duplicates in df2: {df2_duplicates.shape[0]}")
-print(df2_duplicates)
+# Save cleaned data
+player_df_cleaned.to_csv('cleaned_player_data_final.csv', index=False)
+
+print(f"Cleaned data contains {player_df_cleaned.shape[0]} rows.")

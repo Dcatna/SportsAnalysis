@@ -1,46 +1,55 @@
 import torch
 import pandas as pd
-from overunder import OverUnderNN
+from model import OverUnderNN
 
 # Load the trained model
-model_path = 'over_under_model.pth'
-input_size = 8 + len(['Team_A', 'Team_B', ...])  # Adjust based on your training data (number of features + one-hot encoded teams)
+model_path = 'overunder_model.pth'
+input_size = 73
 model = OverUnderNN(input_size=input_size)
 model.load_state_dict(torch.load(model_path))
 model.eval()
 
-# Manually input the game data
+# Manually input the game data with the necessary features
 new_game_data = {
-    'Spread': -3.5,
-    'Total': 47.5,
-    'Home': 1,
-    'Off_Pts': 0,  # Set to 0 if you're predicting this
-    'Def_Pts': 0,  # Set to 0 if you're predicting this
-    'Point_Diff': 0,  # Set to 0 since it's unknown before the game
-    'Spread_Covered': 0,  # Set to 0 or omit if calculating post-game
-    'Actual_vs_Expected': 0.0  # Set to 0 since it's unknown before the game
+    'Spread': 2.5,
+    'Total': 36,
+    'Home': 0,
+    'Avg_Off_Pts_Last_5': 84,
+    'Avg_Def_Pts_Last_5': 99
 }
 
-# One-Hot Encode the teams (manually)
-teams = ['Team_A', 'Team_B', ...]  # Replace with all team names used in training
+# Predefined team columns from the training data
+team_columns = [
+    'Team_ATL', 'Team_BUF', 'Team_CAR', 'Team_CHI', 'Team_CIN', 'Team_CLE', 'Team_CLT', 'Team_CRD', 'Team_DAL', 
+    'Team_DEN', 'Team_DET', 'Team_GNB', 'Team_HTX', 'Team_JAX', 'Team_KAN', 'Team_MIA', 'Team_MIN', 'Team_NOR', 
+    'Team_NWE', 'Team_NYG', 'Team_NYJ', 'Team_OTI', 'Team_PHI', 'Team_PIT', 'Team_RAI', 'Team_RAM', 'Team_RAV', 
+    'Team_SDG', 'Team_SEA', 'Team_SFO', 'Team_TAM', 'Team_WAS', 'Opp_ATL', 'Opp_BUF', 'Opp_CAR', 'Opp_CHI', 
+    'Opp_CIN', 'Opp_CLE', 'Opp_CLT', 'Opp_CRD', 'Opp_DAL', 'Opp_DEN', 'Opp_DET', 'Opp_GNB', 'Opp_HTX', 'Opp_JAX', 
+    'Opp_KAN', 'Opp_MIA', 'Opp_MIN', 'Opp_NOR', 'Opp_NWE', 'Opp_NYG', 'Opp_NYJ', 'Opp_OTI', 'Opp_PHI', 'Opp_PIT', 
+    'Opp_RAI', 'Opp_RAM', 'Opp_RAV', 'Opp_SDG', 'Opp_SEA', 'Opp_SFO', 'Opp_TAM', 'Opp_WAS'
+]
 
-for team in teams:
-    new_game_data[f'Team_{team}'] = 1 if team == 'Team_A' else 0  # Replace 'Team_A' with the home team
-    new_game_data[f'Opp_{team}'] = 1 if team == 'Team_B' else 0  # Replace 'Team_B' with the opponent
+# Initialize the one-hot encoding columns with zeros
+for col in team_columns:
+    new_game_data[col] = 0
 
-# Convert the data to a DataFrame (for consistency)
+# Set the actual teams for this game
+new_game_data['Team_ATL'] = 1  # Example: Home team is ATL
+new_game_data['Opp_BUF'] = 1   # Example: Opponent is BUF
+
+# Convert to DataFrame
 input_df = pd.DataFrame([new_game_data])
 
-# Extract the feature columns (ensure order matches training)
-X_new = input_df[['Spread', 'Total', 'Home', 'Off_Pts', 'Def_Pts', 'Point_Diff', 'Spread_Covered', 'Actual_vs_Expected'] + [f'Team_{team}' for team in teams] + [f'Opp_{team}' for team in teams]]
+# Ensure the DataFrame columns are in the correct order
+expected_columns = ['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5'] + team_columns
 
-# Convert the DataFrame to a PyTorch tensor
-X_new_tensor = torch.tensor(X_new.values, dtype=torch.float32)
+# Reorder the DataFrame to match the expected column order
+X_new = input_df[expected_columns]
 
-# Make the prediction
-with torch.no_grad():
-    prediction = model(X_new_tensor)
+# Print the columns used in prediction input
+print("Columns in Prediction Input:")
+for col in X_new.columns:
+    print(col)
 
-# Output the predicted total points for the game
-predicted_total = prediction.item()
-print(f'Predicted Total Points: {predicted_total:.2f}')
+# Print the final number of features to confirm
+print(f"\nFinal number of features in input: {X_new.shape[1]}")
