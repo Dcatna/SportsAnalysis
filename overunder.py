@@ -9,6 +9,7 @@ from model import OverUnderNN
 
 # Load the dataset
 merged_dataset = pd.read_csv("nfl_merged_corrected.csv")
+player_data = pd.read_csv("all_player_data_cleaned.csv")
 
 # Clean the dataset
 data_cleaned = merged_dataset.dropna()
@@ -24,11 +25,47 @@ def add_team_identifier(df):
 # Add the team and opponent identifiers
 data_cleaned = add_team_identifier(data_cleaned)
 
-def calculate_rolling_averages(df, team_column, points_column, n_games=5):
-    df.loc[:, f'Avg_{points_column}_Last_{n_games}'] = df.groupby(team_column)[points_column].transform(
-        lambda x: x.rolling(window=n_games, min_periods=1).mean()
-    )
-    return df
+# Combine Season and Date to create a full date
+data_cleaned['Full_Date'] = data_cleaned['Season'].astype(str) + ' ' + data_cleaned['Date']
+
+# Convert to datetime using the correct format
+data_cleaned['Full_Date'] = pd.to_datetime(data_cleaned['Full_Date'], format='%Y %B %d')
+
+# If you need the date as a string formatted as 'YYYY-MM-DD'
+data_cleaned['Date'] = data_cleaned['Full_Date'].dt.strftime('%Y-%m-%d')
+
+# Now you can drop the 'Full_Date' column if it's no longer needed
+data_cleaned = data_cleaned.drop(columns=['Full_Date'])
+
+# Standardize team names
+team_mapping = {
+    'CRD': 'ARI', 'RAM': 'STL', 'Yds': 'LA', 'SDG': 'LAC',
+    'RAI': 'OAK', 'HTX': 'HOU', 'OTI': 'TEN', 'Yds_Lost_Sacks': 'LVR'
+}
+team_name_mapping = {
+    'SDG': 'LAC', 'STL': 'LA', 'OAK': 'LVR', 'RAM': 'LA',
+    'PHO': 'ARI', 'CRD': 'ARI', 'RAI': 'LVR', 'HTX': 'HOU',
+    'CLT': 'IND', 'KAN': 'KC', 'GN': 'NYG', 'NYG': 'NYG',
+    'NYJ': 'NYJ', 'JAC': 'JAX', 'NOR': 'NO', 'TAM': 'TB', 'WAS': 'WAS',
+    'GB': 'GNB', 'NE': 'NWE', 'SF': 'SFO', 'TEN': 'TEN'
+}
+player_data['Tm'] = player_data['Tm'].map(team_name_mapping)
+print("jkl;jkl", data_cleaned['Team'].unique())
+print("Standardized Teams in player_data:", player_data['Tm'].unique())
+missing_teams = player_data['Tm'].isna().sum()
+print(f"Number of missing teams after mapping: {missing_teams}")
+
+# Handling missing teams
+if missing_teams > 0:
+    print("Handling missing teams...")
+    player_data['Tm'] = player_data['Tm'].fillna('Unknown')
+    unmapped_teams = player_data[player_data['Tm'] == 'Unknown']['Player'].unique()
+    print(f"Unmapped Teams: {unmapped_teams}")
+else:
+    unmapped_teams = []
+
+# Apply the mapping to data_cleaned
+data_cleaned['Team'] = data_cleaned['Team'].replace(team_mapping)
 
 # Convert Time_of_Possession to seconds
 def convert_time_of_possession_to_seconds(time_str):
@@ -44,7 +81,14 @@ n_games = 5
 # Apply the conversion
 data_cleaned['Time_of_Possession_Seconds'] = data_cleaned['Time_of_Possession'].apply(convert_time_of_possession_to_seconds)
 
-# Calculate rolling averages on the converted column
+# Function to calculate rolling averages
+def calculate_rolling_averages(df, team_column, points_column, n_games=5):
+    df.loc[:, f'Avg_{points_column}_Last_{n_games}'] = df.groupby(team_column)[points_column].transform(
+        lambda x: x.rolling(window=n_games, min_periods=1).mean()
+    )
+    return df
+
+# Calculate rolling averages on key metrics
 data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Time_of_Possession_Seconds', n_games=n_games)
 data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Off_Pts', n_games=n_games)
 data_cleaned = calculate_rolling_averages(data_cleaned, 'Opp', 'Def_Pts', n_games=n_games)
@@ -59,17 +103,66 @@ data_cleaned['Over_Under_Target'] = data_cleaned['Over_Under_Target'].astype(int
 columns_to_drop = ['Team_Pts', 'Opp_Pts', 'Team_Yds', 'Team_Yds_Lost_Sacks']
 data_cleaned = data_cleaned.drop(columns=columns_to_drop, errors='ignore')
 
+# One-hot encode players
+player_columns = player_data['Player'].unique()
+
+for player in player_columns:
+    player_data[player] = player_data['Player'].apply(lambda x: 1 if x == player else 0)
+
+# Group by Date and Tm (team) and sum the player columns
+one_hot_encoded_data = player_data.groupby(['Date', 'Tm'])[player_columns].sum().reset_index()
+
+# Merge the player data with the cleaned game data
+data_cleaned = pd.merge(data_cleaned, one_hot_encoded_data, how='left', left_on=['Date', 'Team'], right_on=['Date', 'Tm'])
+
+# Drop the redundant 'Tm' column after merging
+data_cleaned.drop(columns=['Tm'], inplace=True, errors='ignore')
+
+# Replace NaN values with 0 in player columns
+data_cleaned[player_columns] = data_cleaned[player_columns].fillna(0)
+
 team_columns = [col for col in data_cleaned.columns if col.startswith('Team_') or col.startswith('Opp_')]
+player_data['Date'] = pd.to_datetime(player_data['Date'])
+data_cleaned['Date'] = pd.to_datetime(data_cleaned['Date'])
 
-# Define the feature set without the dropped columns
+# Ensure team names are consistent (e.g., all uppercase)
+player_data['Tm'] = player_data['Tm'].str.upper()
+data_cleaned['Team'] = data_cleaned['Team'].str.upper()
+
+# Extract unique dates and teams from data_cleaned
+cleaned_unique_dates = data_cleaned['Date'].unique()
+cleaned_unique_teams = data_cleaned['Team'].unique()
+
+# After one-hot encoding and before merging
+print("One-Hot Encoded Data Sample:")
+print(one_hot_encoded_data.head())
+
+# After merging and filling NaNs
+print("Final Data with Player Columns (Sample):")
+print(data_cleaned[player_columns].head())
+
+print("NaN Values in Player Columns After Filling:")
+print(data_cleaned[player_columns].isna().sum())
+
+# Filter and inspect specific games or players
+specific_game = data_cleaned[(data_cleaned['Date'] == '2014-09-04') & (data_cleaned['Team'] == 'SEA')]
+print("Specific Game Player Encoding:")
+print(specific_game[player_columns].head())
+
+# Inspect a few specific player columns across the first few rows
+specific_players = ['Philip Rivers', 'Ryan Mathews', 'Danny Woodhead', 'Antonio Gates']
+print("First few rows for specific players:")
+print(data_cleaned[specific_players].head(10))
+
+# Print all player columns for the first row
+print("All player columns for the first row:")
+print(data_cleaned.loc[0, player_columns])
+
+# Prepare the data for training
 X = data_cleaned[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5', 
-                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns]
+                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns + list(player_columns)]
 y = data_cleaned['Over_Under_Target']
-
-
-for col in X.columns:
-    print(col)
-print(len(X), X)
+data_cleaned.to_csv("cleaned_data_for_inspection.csv", index=False)
 # Shuffle and split the data
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, shuffle=True)
 test_indices = X_test.index
@@ -78,12 +171,10 @@ test_indices = X_test.index
 
 # Initialize model, loss function, and optimizer
 input_size = X_train.shape[1]
-print("input sixe: ", input_size)
+print("input size: ", input_size)
 model = OverUnderNN(input_size=input_size)
 criterion = nn.BCELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.0005)
-
-# Convert data to tensors
 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
 y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
 
@@ -156,10 +247,10 @@ y_permuted = np.random.permutation(y)
 X_train_perm, X_test_perm, y_train_perm, y_test_perm = train_test_split(X, y_permuted, test_size=0.3, random_state=42, shuffle=True)
 
 X_train_perm_tensor = torch.tensor(X_train_perm.values, dtype=torch.float32)
-y_train_perm_tensor = torch.tensor(y_train_perm, dtype=torch.float32).view(-1, 1)  # No .values here
+y_train_perm_tensor = torch.tensor(y_train_perm, dtype=torch.float32).view(-1, 1)
 
 X_test_perm_tensor = torch.tensor(X_test_perm.values, dtype=torch.float32)
-y_test_perm_tensor = torch.tensor(y_test_perm, dtype=torch.float32).view(-1, 1)  # No .values here
+y_test_perm_tensor = torch.tensor(y_test_perm, dtype=torch.float32).view(-1, 1)
 
 # Train on permuted data
 model_perm = OverUnderNN(input_size=input_size)
@@ -191,6 +282,7 @@ for i, idx in enumerate(test_indices[:10]):
     actual_result = "Over" if y_test.iloc[i] == 1 else "Under"
     print(f"Game {i + 1}: Predicted: {predicted}, Actual: {actual_result}, Actual Score: {actual_score}, Over/Under Line: {over_under_line}")
 
+# Save the model
 try:
     torch.save(model.state_dict(), "overunder_model.pth")
     print("MODEL SAVED")
