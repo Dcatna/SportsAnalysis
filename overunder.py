@@ -10,7 +10,7 @@ from model import OverUnderNN
 # Load the dataset
 merged_dataset = pd.read_csv("nfl_merged_corrected.csv")
 player_data = pd.read_csv("new_player_data.csv")
-all_data = pd.read_csv("insp1.csv")
+all_data = pd.read_csv("all_data.csv")
 # Clean the dataset
 data_cleaned = merged_dataset.dropna()
 
@@ -30,16 +30,6 @@ def calculate_rolling_averages(df, team_column, points_column, n_games=5):
         lambda x: x.rolling(window=n_games, min_periods=1).mean()
     )
     return df
-def calculate_player_rolling_averages(df, player_column='Player', team_column='Tm', n_games=5):
-    # Group by player and team to calculate rolling averages
-    df = df.sort_values(by=['Player', 'Date'])
-    metrics = ['Yds', 'Yds.1', 'Yds.3', 'TD']  # Add more metrics if needed
-
-    for metric in metrics:
-        rolling_avg_column = f'Avg_{metric}_Last_{n_games}'
-        df[rolling_avg_column] = df.groupby([player_column, team_column])[metric].transform(lambda x: x.rolling(window=n_games, min_periods=1).mean())
-
-    return df
 
 # Convert Time_of_Possession to seconds
 def convert_time_of_possession_to_seconds(time_str):
@@ -56,11 +46,11 @@ n_games = 5
 all_data['Time_of_Possession_Seconds'] = all_data['Time_of_Possession'].apply(convert_time_of_possession_to_seconds)
 
 # Calculate rolling averages on the converted column
-all_data = calculate_rolling_averages(all_data, 'Team', 'Time_of_Possession_Seconds', n_games=n_games)
-all_data = calculate_rolling_averages(all_data, 'Team', 'Off_Pts', n_games=n_games)
-all_data = calculate_rolling_averages(all_data, 'Opponent', 'Def_Pts', n_games=n_games)
-all_data = calculate_rolling_averages(all_data, 'Team', '3DConv', n_games=n_games)
-all_data = calculate_rolling_averages(all_data, 'Team', '4DConv', n_games=n_games)
+# data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Time_of_Possession_Seconds', n_games=n_games)
+# data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Off_Pts', n_games=n_games)
+# data_cleaned = calculate_rolling_averages(data_cleaned, 'Opp', 'Def_Pts', n_games=n_games)
+# data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', '3DConv', n_games=n_games)
+# data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', '4DConv', n_games=n_games)
 
 # Ensure the 'Over_Under_Target' column is created before filtering columns
 all_data['Over_Under_Target'] = (all_data['Off_Pts'] + all_data['Def_Pts']) > all_data['Total']
@@ -197,10 +187,10 @@ y_permuted = np.random.permutation(y)
 X_train_perm, X_test_perm, y_train_perm, y_test_perm = train_test_split(X, y_permuted, test_size=0.3, random_state=42, shuffle=True)
 
 X_train_perm_tensor = torch.tensor(X_train_perm.values, dtype=torch.float32)
-y_train_perm_tensor = torch.tensor(y_train_perm, dtype=torch.float32).view(-1, 1)  # No .values here
+y_train_perm_tensor = torch.tensor(y_train_perm, dtype=torch.float32).view(-1, 1)
 
 X_test_perm_tensor = torch.tensor(X_test_perm.values, dtype=torch.float32)
-y_test_perm_tensor = torch.tensor(y_test_perm, dtype=torch.float32).view(-1, 1)  # No .values here
+y_test_perm_tensor = torch.tensor(y_test_perm, dtype=torch.float32).view(-1, 1)
 
 # Train on permuted data
 model_perm = OverUnderNN(input_size=input_size)
@@ -232,6 +222,7 @@ for i, idx in enumerate(test_indices[:10]):
     actual_result = "Over" if y_test.iloc[i] == 1 else "Under"
     print(f"Game {i + 1}: Predicted: {predicted}, Actual: {actual_result}, Actual Score: {actual_score}, Over/Under Line: {over_under_line}")
 
+# Save the model
 try:
     torch.save(model.state_dict(), "overunder_model.pth")
     print("MODEL SAVED")
