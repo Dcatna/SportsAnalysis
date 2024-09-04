@@ -12,5 +12,6 @@ class OverUnderNN(nn.Module):
     def forward(self, x):
         x = torch.relu(self.layer1(x))
         x = torch.relu(self.layer2(x))
-        x = self.sigmoid(self.output(x))
+        x = self.sigmoid(self.output(x))  # Apply sigmoid activation here
         return x
+

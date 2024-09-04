@@ -9,7 +9,8 @@ from model import OverUnderNN
 
 # Load the dataset
 merged_dataset = pd.read_csv("nfl_merged_corrected.csv")
-
+player_data = pd.read_csv("new_player_data.csv")
+all_data = pd.read_csv("insp1.csv")
 # Clean the dataset
 data_cleaned = merged_dataset.dropna()
 
@@ -29,6 +30,16 @@ def calculate_rolling_averages(df, team_column, points_column, n_games=5):
         lambda x: x.rolling(window=n_games, min_periods=1).mean()
     )
     return df
+def calculate_player_rolling_averages(df, player_column='Player', team_column='Tm', n_games=5):
+    # Group by player and team to calculate rolling averages
+    df = df.sort_values(by=['Player', 'Date'])
+    metrics = ['Yds', 'Yds.1', 'Yds.3', 'TD']  # Add more metrics if needed
+
+    for metric in metrics:
+        rolling_avg_column = f'Avg_{metric}_Last_{n_games}'
+        df[rolling_avg_column] = df.groupby([player_column, team_column])[metric].transform(lambda x: x.rolling(window=n_games, min_periods=1).mean())
+
+    return df
 
 # Convert Time_of_Possession to seconds
 def convert_time_of_possession_to_seconds(time_str):
@@ -42,30 +53,33 @@ def convert_time_of_possession_to_seconds(time_str):
 
 n_games = 5
 # Apply the conversion
-data_cleaned['Time_of_Possession_Seconds'] = data_cleaned['Time_of_Possession'].apply(convert_time_of_possession_to_seconds)
+all_data['Time_of_Possession_Seconds'] = all_data['Time_of_Possession'].apply(convert_time_of_possession_to_seconds)
 
 # Calculate rolling averages on the converted column
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Time_of_Possession_Seconds', n_games=n_games)
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', 'Off_Pts', n_games=n_games)
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Opp', 'Def_Pts', n_games=n_games)
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', '3DConv', n_games=n_games)
-data_cleaned = calculate_rolling_averages(data_cleaned, 'Team', '4DConv', n_games=n_games)
+all_data = calculate_rolling_averages(all_data, 'Team', 'Time_of_Possession_Seconds', n_games=n_games)
+all_data = calculate_rolling_averages(all_data, 'Team', 'Off_Pts', n_games=n_games)
+all_data = calculate_rolling_averages(all_data, 'Opponent', 'Def_Pts', n_games=n_games)
+all_data = calculate_rolling_averages(all_data, 'Team', '3DConv', n_games=n_games)
+all_data = calculate_rolling_averages(all_data, 'Team', '4DConv', n_games=n_games)
 
 # Ensure the 'Over_Under_Target' column is created before filtering columns
-data_cleaned['Over_Under_Target'] = (data_cleaned['Off_Pts'] + data_cleaned['Def_Pts']) > data_cleaned['Total']
-data_cleaned['Over_Under_Target'] = data_cleaned['Over_Under_Target'].astype(int)
-
+all_data['Over_Under_Target'] = (all_data['Off_Pts'] + all_data['Def_Pts']) > all_data['Total']
+all_data['Over_Under_Target'] = all_data['Over_Under_Target'].astype(int)
+all_data = all_data.fillna(0)
+all_data.to_csv("all_data.csv", index=False)
 # Drop the specific columns you don’t want
 columns_to_drop = ['Team_Pts', 'Opp_Pts', 'Team_Yds', 'Team_Yds_Lost_Sacks']
-data_cleaned = data_cleaned.drop(columns=columns_to_drop, errors='ignore')
+all_data = all_data.drop(columns=columns_to_drop, errors='ignore')
 
-team_columns = [col for col in data_cleaned.columns if col.startswith('Team_') or col.startswith('Opp_')]
+team_columns = [col for col in all_data.columns if col.startswith('Team_') or col.startswith('Opp_')]
+player_columns = [col for col in all_data.columns if col.startswith('player_')]
 
-# Define the feature set without the dropped columns
-X = data_cleaned[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5', 
-                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns]
-y = data_cleaned['Over_Under_Target']
 
+X = all_data[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5', 
+                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns + player_columns]
+y = all_data['Over_Under_Target']
+
+X.fillna(0)
 
 for col in X.columns:
     print(col)
@@ -75,31 +89,58 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_
 test_indices = X_test.index
 
 # Define the neural network class
+X_train = X_train.fillna(0)  # Replace NaN with 0
 
 # Initialize model, loss function, and optimizer
 input_size = X_train.shape[1]
+print("HII")
 print("input sixe: ", input_size)
 model = OverUnderNN(input_size=input_size)
 criterion = nn.BCELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.0005)
+def initialize_weights(m):
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
 
+model.apply(initialize_weights)
 # Convert data to tensors
 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
 y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
 
+nan_columns = X_train.columns[X_train.isna().any()].tolist()
+inf_columns = X_train.columns[np.isinf(X_train).any()].tolist()
+
+print("Columns with NaN values:", nan_columns)
+print("Columns with Inf values:", inf_columns)
 # Training loop
+# Training loop with a debug step to inspect predictions
 epochs = 2000
+if torch.isnan(X_train_tensor).any() or torch.isinf(X_train_tensor).any():
+    print("Found NaN or Inf in input data.")
 for epoch in range(epochs):
     model.train()
     predictions = model(X_train_tensor)
+
+    # Debug step: Check for NaN or Inf in predictions
+    if torch.isnan(predictions).any() or torch.isinf(predictions).any():
+        print(f"Epoch {epoch}: Found NaN or Inf in predictions.")
+        break
+
     loss = criterion(predictions, y_train_tensor)
     optimizer.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
     optimizer.step()
 
     if (epoch + 1) % 10 == 0:
         print(f'Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}')
 
+for name, param in model.named_parameters():
+    if torch.isnan(param).any() or torch.isinf(param).any():
+        print(f"Found NaN or Inf in the weights of layer {name}")
 # Convert test data to tensors
 X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
 y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
