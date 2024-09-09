@@ -10,7 +10,7 @@ from model import OverUnderNN
 # Load the dataset
 merged_dataset = pd.read_csv("nfl_merged_corrected.csv")
 player_data = pd.read_csv("new_player_data.csv")
-all_data = pd.read_csv("all_data.csv")
+all_data = pd.read_csv("t.csv")
 # Clean the dataset
 data_cleaned = merged_dataset.dropna()
 
@@ -27,7 +27,7 @@ data_cleaned = add_team_identifier(data_cleaned)
 
 def calculate_rolling_averages(df, team_column, points_column, n_games=5):
     df.loc[:, f'Avg_{points_column}_Last_{n_games}'] = df.groupby(team_column)[points_column].transform(
-        lambda x: x.rolling(window=n_games, min_periods=1).mean()
+        lambda x: x.shift(1).rolling(window=n_games, min_periods=1).mean()
     )
     return df
 
@@ -56,21 +56,21 @@ all_data['Time_of_Possession_Seconds'] = all_data['Time_of_Possession'].apply(co
 all_data['Over_Under_Target'] = (all_data['Off_Pts'] + all_data['Def_Pts']) > all_data['Total']
 all_data['Over_Under_Target'] = all_data['Over_Under_Target'].astype(int)
 all_data = all_data.fillna(0)
-all_data.to_csv("all_data.csv", index=False)
+all_data.to_csv("all_data2.csv", index=False)
 # Drop the specific columns you don’t want
 columns_to_drop = ['Team_Pts', 'Opp_Pts', 'Team_Yds', 'Team_Yds_Lost_Sacks']
 all_data = all_data.drop(columns=columns_to_drop, errors='ignore')
 
 team_columns = [col for col in all_data.columns if col.startswith('Team_') or col.startswith('Opp_')]
 player_columns = [col for col in all_data.columns if col.startswith('player_')]
-
-
+day_columns = [col for col in all_data.columns if col.startswith('Day_')]
+year_columns = [col for col in all_data.columns if col.startswith('Year_')]
 X = all_data[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5', 
-                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns + player_columns]
+                  'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns + player_columns + day_columns + year_columns]
 y = all_data['Over_Under_Target']
 
 X.fillna(0)
-
+X.to_csv("SDF2.csv", index=False)
 for col in X.columns:
     print(col)
 print(len(X), X)
@@ -87,7 +87,7 @@ print("HII")
 print("input sixe: ", input_size)
 model = OverUnderNN(input_size=input_size)
 criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.0005)
+optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-5)
 def initialize_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.xavier_uniform_(m.weight)
@@ -205,22 +205,34 @@ for epoch in range(epochs):
     optimizer_perm.step()
 
 # Evaluate on permuted data
-model_perm.eval()
+# Test model on test data
+model.eval()
 with torch.no_grad():
-    predictions_perm = model_perm(X_test_perm_tensor)
-    predicted_classes_perm = (predictions_perm > 0.5).float()
-    accuracy_perm = accuracy_score(y_test_perm_tensor, predicted_classes_perm)
+    predictions = model(X_test_tensor)  # Raw predictions (confidence scores between 0 and 1)
+    test_loss = criterion(predictions, y_test_tensor)
+    predicted_classes = (predictions > 0.5).float()
+    accuracy = accuracy_score(y_test_tensor, predicted_classes)
 
-print(f'Permutation Test Accuracy: {accuracy_perm:.4f}')
+print(f'Test Loss: {test_loss.item():.4f}')
+print(f'Test Accuracy: {accuracy:.4f}')
 
-# Manually inspect predictions
-print("\nManual Inspection of Predictions:")
+# Output confidence values for predictions
+confidences = predictions.squeeze().numpy()  # Get confidence scores as a flat array
+
+print("\nManual Inspection of Predictions (with Confidence):")
 for i, idx in enumerate(test_indices[:10]):
-    actual_score = data_cleaned.loc[idx, 'Off_Pts'] + data_cleaned.loc[idx, 'Def_Pts']
-    over_under_line = data_cleaned.loc[idx, 'Total']
+    # Retrieve the correct score for both teams
+    actual_score = all_data.loc[idx, 'Off_Pts'] + all_data.loc[idx, 'Def_Pts']  # Total score
+    over_under_line = all_data.loc[idx, 'Total']  # Over/Under line
+
+    # Determine if the game result was Over or Under
+    actual_result = "Over" if actual_score > over_under_line else "Under"
+
+    # Compare this with the model's prediction and confidence score
     predicted = "Over" if predicted_classes[i].item() == 1 else "Under"
-    actual_result = "Over" if y_test.iloc[i] == 1 else "Under"
-    print(f"Game {i + 1}: Predicted: {predicted}, Actual: {actual_result}, Actual Score: {actual_score}, Over/Under Line: {over_under_line}")
+    confidence = confidences[i]  # Confidence score for this prediction
+
+    print(f"Game {i + 1}: Predicted: {predicted}, Confidence: {confidence:.2f}, Actual: {actual_result}, Actual Score: {actual_score}, Over/Under Line: {over_under_line}")
 
 # Save the model
 try:
