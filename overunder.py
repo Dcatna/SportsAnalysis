@@ -65,6 +65,7 @@ team_columns = [col for col in all_data.columns if col.startswith('Team_') or co
 player_columns = [col for col in all_data.columns if col.startswith('player_')]
 day_columns = [col for col in all_data.columns if col.startswith('Day_')]
 year_columns = [col for col in all_data.columns if col.startswith('Year_')]
+
 X = all_data[['Spread', 'Total', 'Home', 'Avg_Off_Pts_Last_5', 'Avg_Def_Pts_Last_5', 
                   'Avg_Time_of_Possession_Seconds_Last_5', 'Avg_3DConv_Last_5', 'Avg_4DConv_Last_5'] + team_columns + player_columns + day_columns + year_columns]
 y = all_data['Over_Under_Target']

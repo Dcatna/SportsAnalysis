@@ -11,18 +11,16 @@ model.load_state_dict(torch.load(model_path, weights_only=True))
 
 model.eval()
 
-#teams = [col for col in data.columns if col.startswith('Team_') or col.startswith('Opp_')]
-# Manually input the game data with the necessary features
 team_columns = [col for col in data.columns if col.startswith('Team_') or col.startswith('Opp_')]
 player_columns = [col for col in data.columns if col.startswith('player_')]
 day_columns = [col for col in data.columns if col.startswith('Day_')]
 year_columns = [col for col in data.columns if col.startswith('Year_')]
 new_game_data = {
-    'Spread': 4.0,
-    'Total': 43.0,
+    'Spread': 6.0,
+    'Total': 45.0,
     'Home': 1,
-    'Team': 'NYJ',
-    'Opponent': 'SFO',
+    'Team': 'CHI',
+    'Opponent': 'HTX',
     # 'Date': 'September 8',
     # 'Season': '2024',
 
